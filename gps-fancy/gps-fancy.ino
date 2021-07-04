@@ -1,5 +1,6 @@
 #include <M5StickC.h>　
 #include "TinyGPS++.h"        // Downloaded lib
+#include <cmath>
 
 TinyGPSPlus gps;
 HardwareSerial GPSRaw(2);
@@ -9,6 +10,9 @@ int lastRefresh = 0;
 int currentView = 0;
 int secondarySelection = 0;
 
+double destinationLat = 0.00;
+double destinationLng = 0.00;
+  
 void setup() {
   M5.begin(); 
   Serial.begin(9600);
@@ -151,6 +155,123 @@ void batteryFullScreen() {
   M5.Lcd.printf("Bat:\r\n  V: %.3fv  I: %.3fma\r\n (%.2fpc)", voltage, M5.Axp.GetBatCurrent(), percent);
 }
 
+void drawNumber(uint16_t backColor, uint16_t foreColor, int cursorXPos, int cursorYPos, float posVal) {
+  M5.Lcd.setTextColor(foreColor, backColor);
+  M5.Lcd.setCursor(cursorXPos, cursorYPos);
+  M5.Lcd.printf("%.1f", posVal);
+}
+
+void drawString(uint16_t backColor, uint16_t foreColor, int cursorXPos, int cursorYPos, char *text) {
+  M5.Lcd.setTextColor(foreColor, backColor);
+  M5.Lcd.setCursor(cursorXPos, cursorYPos);
+  M5.Lcd.print(text);
+}
+
+void drawLatLngSelection(TinyGPSPlus gps) {
+  M5.Lcd.fillScreen(BLACK);
+  M5.Lcd.setCursor(10,10);
+  
+  // Selection is Lat (increase 0.1 (0), increase 10 (1), flip sign (2)), Lon (increase 0.1 (3), increase 10 (4), flip sign (5));
+  // So 6 possible selections
+  if(secondarySelection > 5) secondarySelection = 0;
+
+  bool latHighlight = secondarySelection < 3;
+  uint16_t selectionFore = BLACK;
+  uint16_t selectionBack = WHITE;
+
+  M5.Lcd.setTextSize(2);
+  int leftIndent = 10;
+  int secondIndent = 80;
+  int topPad = 20;
+  drawString(BLACK, WHITE, leftIndent, 5, "LAT");
+  drawString(BLACK, WHITE, secondIndent, 5, "LON");
+  if(latHighlight) {
+    drawNumber(selectionBack, selectionFore, leftIndent, topPad, destinationLat);
+    drawNumber(selectionFore, selectionBack, secondIndent, topPad, destinationLng);
+  } else {
+    drawNumber(selectionFore, selectionBack, leftIndent, topPad, destinationLat);
+    drawNumber(selectionBack, selectionFore, secondIndent, topPad, destinationLng);
+  }
+
+  M5.Lcd.setTextSize(1);
+  char *increaseTenthsText = "+0.1";
+  char *increaseTensText = "+10";
+  char *flipText = "*-1";
+  char *toolMessages[3] = {
+    increaseTenthsText, increaseTensText, flipText
+  };
+  int controlIndent = 30;
+  int controlTopPad = 50;
+  int toolSelection = secondarySelection % 3;
+  for(int i = 0; i < 3; i++) {
+    char *toolMsg = toolMessages[i];
+    uint16_t fore = selectionBack;
+    uint16_t back = selectionFore;
+    if(i == toolSelection) {
+      fore = selectionFore;
+      back = selectionBack;
+    }
+    drawString(back, fore, controlIndent * (i + 1), controlTopPad, toolMsg);
+  }
+
+  M5.Lcd.setTextColor(WHITE, BLACK);
+}
+
+void capDestLatLng() {
+  if(destinationLat < -90) destinationLat = -90;
+  if(destinationLat > 90) destinationLat = 90;
+  if(destinationLng < -180) destinationLng = -180;
+  if(destinationLng > 180) destinationLng = 180;
+}
+
+bool btnAPressedSinceLastUiDraw() {
+  float sinceChange = millis() - M5.BtnA.lastChange();
+  // < 100 ensures no false positives
+  return M5.BtnA.lastChange() > lastRefresh && sinceChange < 100;
+}
+
+void distanceToDestView(TinyGPSPlus gps) {
+  if(btnAPressedSinceLastUiDraw()) {
+    
+    // Selection is Lat (increase (0), flip sign (1)), Lon (increase (2), flip sign (3));
+    // So 4 possible selections
+    float tenthChange = 0.1;
+    float tenChange = 10.0;
+    switch(secondarySelection) {
+      case 0:
+        destinationLat += tenthChange;
+        break;
+      case 1:
+        destinationLat += tenChange;
+        break;
+      case 2:
+        destinationLat *= -1.0;
+        break;
+      case 3:
+        destinationLng += tenthChange;
+        break;
+      case 4:
+        destinationLng += tenChange;
+        break;
+      case 5:
+        destinationLng *= -1.0;
+        break;
+    }
+    capDestLatLng();
+  }
+  
+  drawLatLngSelection(gps);
+    
+  double distanceKm = gps.distanceBetween(
+    gps.location.lat(),
+    gps.location.lng(),
+    destinationLat,
+    destinationLng) / 1000.0;
+
+  M5.Lcd.setCursor(50, 70);
+  M5.Lcd.printf("Dist: %.3fkm", distanceKm);
+}
+
 void uiLoop(TinyGPSPlus gps) {
   
   switch (currentView) {
@@ -175,6 +296,10 @@ void uiLoop(TinyGPSPlus gps) {
         M5.Lcd.setTextSize(1);
         batteryFullScreen();
         break;
+      case 5:
+        M5.Lcd.setTextSize(1.5);
+        distanceToDestView(gps);
+        break;
       default:
         currentView = 0;
         uiLoop(gps);
@@ -189,11 +314,19 @@ bool canRefreshDisplay() {
 
 void handleButtons(TinyGPSPlus gps) {
   M5.update();
+
+  // refresh on BtnA press to allow views to react. They have to do time comparisons though, as this resets the check (see drawLatLngSelection)
   if(M5.BtnA.wasPressed()) {
+    uiLoop(gps);
+  }
+  
+  // cycle screens when button pressed for > 1s
+  if(M5.BtnA.pressedFor(1000)) {
     currentView++;
     secondarySelection = 0;
     M5.Lcd.fillScreen(BLACK);
     uiLoop(gps);
+    delay(500); // cycle screens one every 0.5s whilst button is pressed
   }
   
   if(M5.BtnB.wasPressed()) {
@@ -214,6 +347,6 @@ void loop() {
         uiLoop(gps);
       }
     }
-    handleButtons(gps);
   }
+  handleButtons(gps);
 }
