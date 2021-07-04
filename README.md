@@ -25,3 +25,25 @@ First for Lat, then for Lon. The text highlighting should make it clear what is 
 - Tap `BtnB` to switch to 'Invert Sign' mode and tap `BtnA` once to switch from 31.2 to -31.2
 
 ![Distance-to screen](https://i.imgur.com/jnB24MG.jpeg)
+
+
+## Serial
+
+NMEA sentences are output verbatim to serial at `9600` baud.
+
+A PowerShell script, `SerialPortReader.ps1`, is included that can stream from the COM port to a file (which should be openable in, for example, Google Earth Pro).
+
+Example usage:
+
+```PowerShell
+C:\Projects\GPS-fancy-display> .\SerialPortReader.ps1
+
+cmdlet SerialPortReader.ps1 at command pipeline position 1
+Supply values for the following parameters:
+PortName: COM3
+BaudRate: 9600
+Checking PortName...
+--> PortName COM3 is available
+Establishing connection to the port...
+[...]
+```
